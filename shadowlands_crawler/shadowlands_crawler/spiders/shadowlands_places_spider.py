@@ -5,7 +5,7 @@ from toolz import dissoc, get
 
 class ShadowlandsPlacesSpider(scrapy.Spider):
     name = 'shadowlands_places_spider'
-    allowed_domains = ['www.theshadowlands.net']
+    allowed_domains = ['theshadowlands.net']
     start_urls = ['http://theshadowlands.net/places/']
 
 
@@ -23,10 +23,8 @@ class ShadowlandsPlacesSpider(scrapy.Spider):
 
         us_locations = location_tables[0].xpath('tbody/tr/td/b/a')
         
-        # DEBUG
-        # Change loop to:
-        # for location_link in us_locations:
-        for location_link in us_locations[-1:]:
+        for location_link in us_locations:
+
             prime_location = newline_re.sub(
                 " ",
                 location_link.xpath('./text()').extract()[0]
@@ -39,18 +37,35 @@ class ShadowlandsPlacesSpider(scrapy.Spider):
             )
 
             if prime_location == "District of Columbia":
-                prime_location_field = "city"
+                yield response.follow(
+                    location_link,
+                    self.parse_place_page,
+                    meta={
+                        "city": prime_location,
+                        "state": "Washington DC",
+                        "country": "United States",
+                        "fields": fields
+                    }
+                )
+            elif prime_location in {"California", "Texas"}:
+                yield response.follow(
+                    location_link,
+                    self.parse_place_index_page,
+                    meta={
+                        "state": prime_location,
+                        "country": "United States",
+                        "fields": fields
+                    }
+                )
             else:
-                prime_location_field = "state"
-
-            yield response.follow(
-                location_link,
-                self.parse_place_page,
-                meta={
-                    prime_location_field: prime_location,
-                    "country": "United States",
-                    "fields": fields
-                }
+                yield response.follow(
+                    location_link,
+                    self.parse_place_page,
+                    meta={
+                        "state": prime_location,
+                        "country": "United States",
+                        "fields": fields
+                    }
             )
 
         
@@ -87,11 +102,35 @@ class ShadowlandsPlacesSpider(scrapy.Spider):
             }
 
     
+    def parse_place_index_page(self, response):
+        links = response.xpath('//b/font/font/font/a')
+        index_re = re.compile(r"\(.*\)")
+        newline_re = re.compile(r"\n")
+
+        for link in links:
+            link_text = \
+                newline_re.sub(" ", link.xpath('./text()').extract()[0])
+            
+            if index_re.match(link_text):
+                yield response.follow(
+                    link,
+                    self.parse_place_page,
+                    meta = dissoc(
+                        response.meta,
+                        "download_slot",
+                        "download_latency",
+                        "download_timeout",
+                        "depth"
+                    )
+                )
+
+
     def parse_place_page(self, response):
 
         # Regular expression helpers.
         tag_re = re.compile(r"<[^>]+>")
         newline_re = re.compile(r"\n")
+        location_re = re.compile(r"(.*?) - (.*?) - (.*)")
         
         # Extract the fields to extract from the metadata.
         fields = response.meta["fields"]
@@ -100,10 +139,12 @@ class ShadowlandsPlacesSpider(scrapy.Spider):
         # Next task will be to filter out the ones that are the actual 
         # places, then parse out the city / place / description.
         # Can't lean on xpath here because the font tags are borked as hell.
-        places = response.xpath('//p/b/font')[1].extract().split("<br>")
+        places = \
+            newline_re.sub(" ", response.xpath('.').extract()[0])\
+            .split("<br>")
 
         for place in places:
-            # Skip empty tags. This is half of them.
+            # Skip empty tags.
             if not place.strip(): continue
             
             # Strip out the HTML tags. This is simple because all we need to do
@@ -112,15 +153,15 @@ class ShadowlandsPlacesSpider(scrapy.Spider):
             # Now replace all of the newlines with spaces.
             place_cleaned_space = newline_re.sub(" ", place_cleaned)
 
-            # Split on the space-dash-space and strip the strings.
-            place_split = place_cleaned_space.split(" - ")
+            # Now extract with the regex.
+            location_match = location_re.match(place_cleaned_space)
 
             # Skip if there isn't a real place. This is usually for junk
             # tag closures.
-            if len(place_split) < 2: continue
+            if not location_match: continue
 
             yield {
-                **self.extract_record(place_split, fields),
+                **self.extract_record(location_match.groups(), fields),
                 # All the metadata except fields gets put in the record.
                 **dissoc(
                     response.meta,
