@@ -18,8 +18,16 @@ data/interim/location_cache.csv: data/interim/haunted_places.csv
 		slamdring --num-tasks 10 --no-repeat-request >> \
 		data/interim/location_cache.csv
 
-data/processed/haunted_places.csv: data/interim/haunted_places.csv data/interim/location_cache.csv
+data/interim/city_cache.csv: data/interim/haunted_places.csv
+	python scripts/haunted_cities_geocoder.py \
+		data/interim/haunted_places.csv \
+		--cache-file data/interim/city_cache.csv | \
+		slamdring --num-tasks 10 --no-repeat-request >> \
+		data/interim/city_cache.csv
+
+data/processed/haunted_places.csv: data/interim/haunted_places.csv data/interim/location_cache.csv data/interim/city_cache.csv
 	python scripts/process_haunted_places.py \
 		data/interim/haunted_places.csv \
 		data/interim/location_cache.csv \
+		data/interim/city_cache.csv \
 		--output-file data/processed/haunted_places.csv
