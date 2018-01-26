@@ -4,6 +4,7 @@ import logging
 import csv
 
 from toolz import get_in
+from html.parser import HTMLParser
 
 STATE_TO_ABBREV = {
     "Alabama": "AL",
@@ -137,6 +138,8 @@ def main(
     )
     haunted_place_writer.writeheader()
 
+    html_escaper = HTMLParser()
+
     for row in haunted_place_reader:
         longitude = get_in(
             [(row["state"], row["city"], row["location"]), "lng"],
@@ -159,6 +162,9 @@ def main(
             city_cache,
             None
         )
+
+        row["description"] = html_escaper.unescape(row["description"])
+        row["city"] = html_escaper.unescape(row["city"])
 
         haunted_place_writer.writerow(
             {
